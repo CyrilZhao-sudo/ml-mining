@@ -53,4 +53,74 @@ def demo(feature_column):
 age = feature_column.numeric_column("age")
 demo(age)
 
+age_buckets = feature_column.bucketized_column(age, boundaries=[18, 25, 30, 35, 40, 45, 50, 55, 60, 65]) # 返回的是one-hot形式
+demo(age_buckets)
 
+# 类别型的one-hot
+thal = feature_column.categorical_column_with_vocabulary_list('thal', ['fixed', 'normal', 'reversible'], default_value=0)
+thal_one_hot = feature_column.indicator_column(thal)
+demo(thal_one_hot)
+
+# embedding
+thal_embedding = feature_column.embedding_column(thal, dimension=8)
+demo(thal_embedding)
+
+# hash bucket
+thal_hashed = feature_column.categorical_column_with_hash_bucket('thal', 100)
+demo(feature_column.indicator_column(thal_hashed))
+
+# crossesd
+crossed_feature = feature_column.crossed_column([age_buckets, thal], hash_bucket_size=100)
+demo(feature_column.indicator_column(crossed_feature))
+
+
+feature_columns = []
+
+# 数值列
+for header in ['age', 'trestbps', 'chol', 'thalach', 'oldpeak', 'slope', 'ca']:
+    feature_columns.append(feature_column.numeric_column(header))
+
+# 分桶列
+age_buckets = feature_column.bucketized_column(age, boundaries=[18, 25, 30, 35, 40, 45, 50, 55, 60, 65])
+feature_columns.append(age_buckets)
+
+# 类别类
+thal = feature_column.categorical_column_with_vocabulary_list('thal', ['fixed', 'normal', 'reversible'], default_value=0)
+thal_one_hot = feature_column.indicator_column(thal)
+feature_columns.append(thal_one_hot)
+
+# 嵌入类
+thal_embedding = feature_column.embedding_column(thal, dimension=8)
+feature_columns.append(thal_embedding)
+
+# 组合列
+crossed_feature = feature_column.crossed_column([age_buckets, thal], hash_bucket_size=1000)
+crossed_feature = feature_column.indicator_column(crossed_feature)
+feature_columns.append(crossed_feature)
+
+feature_layer = keras.layers.DenseFeatures(feature_columns, name="input_feature")
+
+
+batch_size = 32
+
+train_ds = df_to_dataset(train, batch_size=batch_size)
+val_ds = df_to_dataset(val, shuffle=False, batch_size=batch_size)
+test_ds = df_to_dataset(test,shuffle=False, batch_size=batch_size)
+
+
+model = keras.Sequential([
+    feature_layer,
+    keras.layers.Dense(128, activation='relu'),
+    keras.layers.Dense(64, activation='relu'),
+    keras.layers.Dense(1, activation='sigmoid')
+])
+
+
+model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['acc', 'AUC'], run_eagerly=True)
+
+
+model.fit(train_ds, validation_data=val_ds, epochs=3)
+
+
+loss, acc = model.evaluate(test_ds)
+print("acc", acc)
