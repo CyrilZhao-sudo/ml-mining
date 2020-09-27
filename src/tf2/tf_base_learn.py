@@ -232,3 +232,60 @@ gradient clipping
 '''
 grads = tf.Tensor([1,2])
 new_grads, total_norm = tf.clip_by_global_norm(grads, 25) # global 对所有对参数,参数方向不变，等比例缩放
+# optimizer.apply_gradients(zip(grads, [w1, b1, w2, b2, ...]))
+
+
+
+'''
+tf.where 与 tf.boolean_mask tf.gather_nd 相结合
+tf.scatter_nd(indices, updates, shape) 更新底板（全为0）
+tf.meshgrid 生成数据点
+'''
+
+a = tf.random.normal([3,3])
+mask = a > 0
+tf.boolean_mask(a, mask)
+
+indices = tf.where(mask) # 返回为T的位置 索引
+tf.gather_nd(a, indices) # 根据索引 返回值
+
+# tf.where(cond, x, y)
+
+
+x = tf.linspace(0.0, 2*3.14, 500)
+y = tf.linspace(0.0, 2*3.14, 500)
+point_x, point_y = tf.meshgrid(x, y)
+points = tf.stack([point_x, point_y])
+
+def func(x):
+    return tf.math.sin(x[..., 0]) + tf.math.cos(x[..., 1])
+z = func(points)
+
+'''
+import matplotlib.pyplot as plt
+plt.figure("a")
+plt.imshow(z, origin="lower", inerpolation="none")
+plt.colorbar() 
+等高线等
+'''
+
+'''
+数据集等加载
+
+
+
+'''
+
+import matplotlib.pyplot as plt
+
+def plot_metric(history, metric):
+    train_metrics = history.history[metric]
+    val_metrics = history.history['val_'+metric]
+    epochs = range(1, len(train_metrics) + 1)
+    plt.plot(epochs, train_metrics, 'bo--')
+    plt.plot(epochs, val_metrics, 'ro-')
+    plt.title('Training and validation '+ metric)
+    plt.xlabel("Epochs")
+    plt.ylabel(metric)
+    plt.legend(["train_"+metric, 'val_'+metric])
+    plt.show()
