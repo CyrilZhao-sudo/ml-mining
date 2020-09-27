@@ -6,6 +6,10 @@
 import numpy as np
 import pandas as pd
 import tensorflow as tf
+import os
+
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = '2'
+tf.random.set_seed(123)
 
 with tf.device("cpu"):
     a = tf.constant([1])
@@ -184,3 +188,47 @@ tf.sort(a, direction='DESCENDING', axis=-1) # 默认最后一个轴
 
 idx = tf.argsort(a, direction="DESCENDING")
 tf.gather(a, idx)
+
+def accuracy(output, target, topk=(1,)):
+    maxk = max(topk)
+    batch_size = target.shape[0]
+
+    pred = tf.math.top_k(output, maxk).indices
+    pred = tf.transpose(pred, perm=[1, 0])
+    target_ = tf.broadcast_to(target, pred.shape)
+    correct = tf.equal(pred, target_)
+
+    res = []
+    for k in topk:
+        correct_k = tf.cast(tf.reshape(correct[:k], [-1]), dtype=tf.float32)
+        correct_k = tf.reduce_sum(correct_k)
+        acc = float(correct_k / batch_size)
+        res.append(acc)
+
+    return res
+
+
+'''
+数据的填充与复制
+tf.pad
+tf.title
+tf.broadcast_to 隐式复制
+'''
+a = tf.random.normal([4, 28, 28, 3])
+b = tf.pad(a, [[0,0], [2,2],[2,2,], [0,0]]) # 一一对应纬度
+b.shape
+
+a = tf.random.normal([3,3])
+tf.tile(a, [1, 2]).shape # 1为不复制，保持不变；
+
+
+'''
+张量的限幅 裁剪
+clip_by_value   => tf.maximum  tf.minimum
+relu
+clip_by_norm =>  方向不变，等比例缩放
+gradient clipping 
+一般参数对norm在0-20之前算是比较正常
+'''
+grads = tf.Tensor([1,2])
+new_grads, total_norm = tf.clip_by_global_norm(grads, 25) # global 对所有对参数,参数方向不变，等比例缩放
