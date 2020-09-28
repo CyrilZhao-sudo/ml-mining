@@ -289,3 +289,16 @@ def plot_metric(history, metric):
     plt.ylabel(metric)
     plt.legend(["train_"+metric, 'val_'+metric])
     plt.show()
+
+
+'''
+one-hot 的y的时候，使用的损失函数，softmax之后的值计算loss
+
+自动求导；二阶求导
+'''
+
+
+with tf.GradientTape() as tape:
+    # 前向传播
+    pass
+grads = tape.gradient()
