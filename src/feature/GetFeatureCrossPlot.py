@@ -124,7 +124,7 @@ class DTreeCxPlot(object):
 
 if __name__ == "__main__":
 
-    df = pd.read_csv("../../data/train.csv")
+    df = pd.read_csv("../../data/credit/train.csv")
 
     obj = DTreeCxPlot(is_bin=False)
 
