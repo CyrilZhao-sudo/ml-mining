@@ -6,6 +6,7 @@ from ..utils import feature_column
 from collections import OrderedDict
 from tensorflow.keras import Input, layers
 from .layers import MultiColumnEmbedding
+from .nets import *
 
 
 class DeepFrameWork:
@@ -17,7 +18,7 @@ class DeepFrameWork:
     def build_model(self):
         pass
 
-    def __build_model(self, cons_columns, cate_columns, net_type, **kwargs):
+    def __build_model(self, cons_columns, cate_columns, config, **kwargs):
         '''默认二分类'''
         cons_inputs, cate_inputs = self.__build_inputs(cons_columns, cate_columns)
         cate_embeddings = self.__build_embeddings(cate_columns, cate_inputs, embedding_dropout=0.5)
@@ -30,8 +31,17 @@ class DeepFrameWork:
             else:
                 flatten_emb_layer = layers.Flatten(name="flatten_cate_embeddings")(cate_embeddings)
 
-
-
+        concat_emb_dense = self.__concat_emb_dense(flatten_emb_layer, cons_dense_layer)
+        # DeepFM = ['linear', 'fm_nets', 'dnn_nets']
+        linear_output = linear(embeddings=cate_embeddings, flatten_emb_layer=flatten_emb_layer,
+                               dense_layer=cons_dense_layer, concat_emb_dense=concat_emb_dense, config=None)
+        fm_output = fm_nets(embeddings=cate_embeddings, flatten_emb_layer=flatten_emb_layer,
+                               dense_layer=cons_dense_layer, concat_emb_dense=concat_emb_dense, config=None)
+        dnn_output = dnn_nets(embeddings=cate_embeddings, flatten_emb_layer=flatten_emb_layer,
+                               dense_layer=cons_dense_layer, concat_emb_dense=concat_emb_dense, config=config)
+        logit = layers.Add(name="add_logits")([linear_output, fm_output, dnn_output])
+        output = layers.Dense(1, activation="sigmoid", name="output", use_bias=True)(logit)
+        return output
 
     def __get_feature_column(self, feats, type=None):
         pass
