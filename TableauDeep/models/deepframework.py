@@ -4,21 +4,24 @@
 
 from ..utils import feature_column
 from collections import OrderedDict
-from tensorflow.keras import Input, layers
+from tensorflow.keras import Input, layers, Model
 from .layers import MultiColumnEmbedding
 from .nets import *
 
 
 class DeepFrameWork:
 
-    def __init__(self, cons_columns=None, cate_columns=None):
+    def __init__(self, cons_columns=None, cate_columns=None, config=None):
         self.cons_columns = cons_columns  # feature column
         self.cate_columns = cate_columns  # feature column
+        self.config = config
+
 
     def build_model(self):
-        pass
+        model = self.__build_model(self.cons_columns, self.cate_columns, config=self.config)
+        return model
 
-    def __build_model(self, cons_columns, cate_columns, config, **kwargs):
+    def __build_model(self, cons_columns, cate_columns, config):
         '''默认二分类'''
         cons_inputs, cate_inputs = self.__build_inputs(cons_columns, cate_columns)
         cate_embeddings = self.__build_embeddings(cate_columns, cate_inputs, embedding_dropout=0.5)
@@ -41,7 +44,14 @@ class DeepFrameWork:
                                dense_layer=cons_dense_layer, concat_emb_dense=concat_emb_dense, config=config)
         logit = layers.Add(name="add_logits")([linear_output, fm_output, dnn_output])
         output = layers.Dense(1, activation="sigmoid", name="output", use_bias=True)(logit)
-        return output
+
+        all_inputs = list(cate_inputs.values()) + list(cons_inputs.values())
+
+        model = Model(inputs=all_inputs, outputs=output)
+        model.compile(loss="binary_crossentropy", optimizer="Adam")
+
+        return model
+
 
     def __get_feature_column(self, feats, type=None):
         pass
