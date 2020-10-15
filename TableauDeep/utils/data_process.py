@@ -7,7 +7,7 @@ import numpy as np
 from collections import Counter,OrderedDict
 import logging
 import time
-from sklearn.compose import ColumnTransformer,
+from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 
 def get_logger(logger_name=None):
