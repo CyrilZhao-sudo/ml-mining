@@ -16,6 +16,8 @@ class DeepFrameWork:
         self.cate_columns = cate_columns  # feature column
         self.config = config
 
+    def fit(self, X, y):
+        pass
 
     def build_model(self):
         model = self.__build_model(self.cons_columns, self.cate_columns, config=self.config)
