@@ -65,24 +65,6 @@ def grad(preds, dtrain):
             grad[i] = 0
     return grad, hess
 
-
-'''自定义评价函数 feval'''
-# another self-defined eval metric
-# f(preds: array, train_data: Dataset) -> name: string, eval_result: float, is_higher_better: bool
-# accuracy
-def accuracy(preds, train_data):
-    labels = train_data.get_label()
-    return 'accuracy', np.mean(labels == (preds > 0.5)), True
-
-# self-defined eval metric
-# f(preds: array, train_data: Dataset) -> name: string, eval_result: float, is_higher_better: bool
-# binary error
-def binary_error(preds, train_data):
-    labels = train_data.get_label()
-    return 'error', np.mean(labels != (preds > 0.5)), False
-
-
-
 def robust_pow(num_base, num_pow):
     # numpy does not permit negative numbers to fractional power
     # use this to perform the power algorithmic
@@ -113,3 +95,34 @@ def focal_binary_object(pred, dtrain):
             (gamma_indct + 1) * robust_pow(g5, gamma_indct)) * g1
 
     return grad, hess
+
+
+
+'''自定义评价函数 feval'''
+# another self-defined eval metric
+# f(preds: array, train_data: Dataset) -> name: string, eval_result: float, is_higher_better: bool
+# accuracy
+def accuracy(preds, train_data):
+    labels = train_data.get_label()
+    return 'accuracy', np.mean(labels == (preds > 0.5)), True
+
+# self-defined eval metric
+# f(preds: array, train_data: Dataset) -> name: string, eval_result: float, is_higher_better: bool
+# binary error
+def binary_error(preds, train_data):
+    labels = train_data.get_label()
+    return 'error', np.mean(labels != (preds > 0.5)), False
+
+
+
+
+import pandas as pd
+# for xgb
+def max_bad(preds, dtrain):
+    labels = dtrain.get_label()
+    df = pd.DataFrame({"pred":preds, "label":labels})
+    df["rank"] = df["pred"].rank()
+    df.sort_values(by=["rank"], ascending=False, inplace=True)
+    n = int(0.05 * len(df))
+    m = np.sum(df["label"][:n])
+    return "bad_sample", -float(m)
