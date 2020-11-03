@@ -16,8 +16,25 @@ class Discretize:
         self.label_identify = label_identify
         self.spec_values = spec_values
 
-    def bin_freq_fit(self, qnt_num=10, min_block_size=16):
-        pass
+    def bin_freq_fit(self, qnt_num=10, min_block_size=16, worker=1, verbose=0):
+        cons_bins = {}
+        for cons_f in self.cons_features:
+            bins = self.__bin_freq_single(self.raw, cons_f,qnt_num, min_block_size,self.spec_values)
+        # bins = Parallel(n_jobs=worker, verbose=verbose, )(delayed(self.__bin_freq_single)(self.raw, feat, qnt_num, min_block_size, self.spec_values) for feat in self.cons_features)
+            cons_bins[cons_f] = bins
+        return cons_bins
+
+
+    def __bin_freq_single(self, df, feat_name, qnt_num, min_block_size, spec_values):
+        _qnt_num = int(np.minimum(df[feat_name].nunique() / min_block_size, qnt_num))
+        print(_qnt_num)
+        _, bins = pd.qcut(df.loc[~df[feat_name].isin([spec_values]), feat_name], _qnt_num, retbins=True, labels=False)
+        print(bins)
+        if spec_values is not None:
+            bins = [spec_values] + list(bins)
+        return bins
+
+
 
     def bin_tree_fit(self):
         pass
@@ -70,6 +87,12 @@ class Discretize:
 
         return p
 
+    def __merge_bin_freq(self, df, df_summary, feat_name, label_name, threshold, min_freq, sep, is_factor=False):
+        '''合并类别占比较低的箱'''
+        pass
+
+d = Discretize(df= data, cons_features=["mi_user_model_sms_v2", "mi_user_model_account"], cate_features=None, spec_values=-1)
+d.bin_freq_fit(qnt_num=3)
 
 
 
@@ -121,4 +144,6 @@ def chi_square_pval(p, q):
 
 chi_square_pval(df_summary.loc[0].to_dict(), df_summary.loc[1].to_dict())
 
-
+data = pd.read_csv("~/zhaochen/data/data.csv", usecols=["xiaomi_id","pay_first_date", "label", "basicinfo_sex",
+                                                         "risk_score", "mi_user_model_sms_v2", "mi_user_model_account",
+                                                         "pay_cash_first_duration"])
