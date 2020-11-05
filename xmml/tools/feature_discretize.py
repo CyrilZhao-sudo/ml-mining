@@ -56,14 +56,15 @@ class Discretize:
     def bin_chi_fit(self):
         pass
 
-    def __df_summary(self, df, feat_name, label_name, is_factor=False):
+    def df_summary(self, df, feat_name, label_name, is_factor=False):
         df = df[[feat_name, label_name]]
-        if is_factor:
-            pass
         df_summary = df.groupby(feat_name)[label_name].agg([np.mean, np.count_nonzero, np.size]).rename(
-            columns={"count_nonzero": "bad_obs", "size": "n", "mean": "bad_rate"})
-        df_summary["arrange_col"] = df_summary["bad_rate"].rank()
-        df_summary = df_summary.sort_values(by=["arrange_col"]).reset_index()
+            columns={"count_nonzero": "bad_obs", "size": "n", "mean": "bad_rate"}).reset_index()
+        if is_factor:
+            df_summary["arrange_col"] = df_summary[feat_name]
+        else:
+            df_summary["arrange_col"] = df_summary["bad_rate"].rank()
+        df_summary = df_summary.sort_values(by=["arrange_col"]).reset_index(drop=True)
         df_summary["freq"] = df_summary["n"] / df_summary["n"].sum()
         df_summary["bad_rate_diff"] = df_summary["bad_rate"] - df_summary["bad_rate"].shift(1).fillna(0)
         df_summary["freq_sum"] = df_summary["freq"] + df_summary["freq"].shift(1).fillna(0)
@@ -74,8 +75,7 @@ class Discretize:
             else:
                 res = self.__chi_square_pval(df_summary.loc[i].to_dict(), df_summary.loc[i - 1].to_dict())
             p_vals.append(res)
-        df_summary["pval"] = p_vals
-
+        df_summary["p_val"] = p_vals
         return df_summary
 
     def __chi_square_pval(self, p, q):
@@ -98,7 +98,7 @@ class Discretize:
 
         return p
 
-    def __merge_bin_freq(self, df, df_summary, feat_name, min_freq, threshold, label_name="label", sep="|",
+    def merge_bin_freq(self, df, df_summary, feat_name, min_freq, threshold, label_name="label", sep="|",
                          is_factor=False):
         '''合并类别占比较低的箱'''
         while (min_freq < threshold and len(df_summary) > 2):
@@ -111,24 +111,47 @@ class Discretize:
                 ori_val = df_summary.loc[min_freq_index:min_freq_index + 1][feat_name].to_list()
             else:
                 ori_val = df_summary.loc[min_freq_index - 1:min_freq_index][feat_name].to_list()
-            df[feat_name] = self.__rename_bin_code(df, ori_val, feat_name, sep, is_factor=is_factor)
-            df_summary = self.__df_summary(df, feat_name, label_name, is_factor=is_factor)
+            df[feat_name] = self.rename_bin_code(df, ori_val, feat_name, sep, is_factor=is_factor)
+            df_summary = self.df_summary(df, feat_name, label_name, is_factor=is_factor)
             min_freq = min(df_summary["freq"])
             if (df[feat_name].nunique() == 2):
                 break
         return df, df_summary
 
-    def __rename_bin_code(self, df, ori_value, feat_name, sep, is_factor):
+    def rename_bin_code(self, df, ori_value, feat_name, sep, is_factor):
         if is_factor:
             new_value = pd.Interval(min(map(lambda x: x.left, ori_value)), max(map(lambda x: x.right, ori_value)))
         else:
-            if not isinstance(df[feat_name].dype, object):
+            if not isinstance(df[feat_name].dtype, object):
                 df[feat_name] = df[feat_name].astype(str)
                 ori_value = list(map(str, ori_value))
             new_value = "{}".format(sep).join(ori_value)
         replace_map = {k: new_value for k in ori_value}
+        # TODO 对interval对象进行替换，变成nan
         replaced_series = df[feat_name].map(replace_map)
         return replaced_series
+
+    def chi_bin_category(self,df, feat_name, label_name, threshold=0.05, sep="|", p_val=0.05):
+        df_xy = df[[feat_name, label_name]]
+        n_unique = df[feat_name].nunique()
+        if n_unique > 2:
+            df_summary = self.df_summary(df_xy, feat_name, label_name, is_factor=False)
+            min_freq = min(df_summary.loc[:, "freq"])
+            if min_freq < threshold:
+                df_xy, df_summary = self.merge_bin_freq(df_xy, df_summary, feat_name, min_freq, threshold, label_name, sep=sep, is_factor=False)
+            #min_bad_rate_diff = min(df_summary.loc[1:, "bad_rate_diff"])
+
+            while (len(df_summary) > 2 and max(df_summary.loc[:, "p_val"]) > p_val):
+                merge_bins_idx = np.argmax(df_summary.loc[1:, "p_val"])
+                ori_values = df_summary.loc[merge_bins_idx:merge_bins_idx+1, feat_name].to_list()
+                df_xy[feat_name] = self.rename_bin_code(df_xy, ori_values, feat_name, sep=sep, is_factor=False)
+
+                df_summary = self.df_summary(df_xy, feat_name, label_name, is_factor=False)
+        else:
+            df_summary = self.df_summary(df_xy, feat_name, label_name, is_factor=False)
+        bins = np.unique(df_summary.loc[:, feat_name])
+        return bins
+
 
     @staticmethod
     def bin_freq_cuts(df_x, q, na_val=None, contain_bound=False):
@@ -230,5 +253,3 @@ def __bin_tree_single(df_x, df_y, max_depth, min_samples_leaf=0.2, criterion="gi
     bins = np.sort(bins)
     return bins
 
-
-get_df_summary(data, "d_risk_score", label_name="label", is_factor=True)
