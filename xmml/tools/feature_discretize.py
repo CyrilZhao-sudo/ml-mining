@@ -11,25 +11,26 @@ from sklearn.tree import DecisionTreeClassifier
 
 
 class Discretize:
-    def __init__(self, df, cons_features, cate_features, label_identify="label", na_val=None):
+    def __init__(self, df, cons_features, cate_features, label_identify="label", na_val=None, na_bin=False):
         self.raw = df
         self.cons_features = cons_features
         self.cate_features = cate_features
         self.label_identify = label_identify
         self.na_val = na_val
+        self.na_bin = na_bin  # 是否对缺失值单独设为一个箱
 
-    def bin_freq_fit(self, qnt_num=10, min_block_size=16, worker=1, verbose=0):
+    def bin_freq_fit(self, qnt_num=10, min_block_size=16, contain_bound=False, worker=1, verbose=0):
         cons_bins = {}
         for cons_f in self.cons_features:
-            bins = self.__bin_freq_single(self.raw, cons_f, qnt_num, min_block_size, self.na_val)
+            bins = self.__bin_freq_single(self.raw, cons_f, qnt_num, min_block_size, self.na_val, contain_bound)
             # bins = Parallel(n_jobs=worker, verbose=verbose, )(delayed(self.__bin_freq_single)(self.raw, feat, qnt_num, min_block_size, self.spec_values) for feat in self.cons_features)
             cons_bins[cons_f] = bins
         return cons_bins
 
-    def __bin_freq_single(self, df, feat_name, qnt_num, min_block_size, na_val=-1):
+    def __bin_freq_single(self, df, feat_name, qnt_num, min_block_size, na_val=-1, contain_bound=False):
         _qnt_num = int(np.minimum(df[feat_name].nunique() / min_block_size, qnt_num))
         q = list(np.arange(0., 1., 1 / _qnt_num))
-        bins = self.bin_freq_cuts(df[feat_name], q, na_val=na_val)
+        bins = self.bin_freq_cuts(df[feat_name], q, na_val=na_val, contain_bound=contain_bound)
         return bins
 
     def bin_tree_fit(self, max_depth, min_samples_leaf, criterion="gini", **kwargs):
@@ -53,9 +54,6 @@ class Discretize:
         return bins
 
     def bin_chi_fit(self):
-        pass
-
-    def __tree_discrete(self, params):
         pass
 
     def __df_summary(self, df, feat_name, label_name, is_factor=False):
@@ -100,20 +98,50 @@ class Discretize:
 
         return p
 
-    def __merge_bin_freq(self, df, df_summary, feat_name, label_name, threshold, min_freq, sep, is_factor=False):
+    def __merge_bin_freq(self, df, df_summary, feat_name, min_freq, threshold, label_name="label", sep="|",
+                         is_factor=False):
         '''合并类别占比较低的箱'''
-        pass
+        while (min_freq < threshold and len(df_summary) > 2):
+            min_freq_index = df_summary[df_summary["freq"] == min_freq].index[0]
+            if (min_freq_index == 0):
+                ori_val = df_summary.head(2)[feat_name].to_list()
+            elif (min_freq_index == len(df_summary) - 1):
+                ori_val = df_summary.tail(2)[feat_name].to_list()
+            elif (df_summary.loc[min_freq_index]["freq_sum"] > df_summary.loc[min_freq_index + 1]["freq_sum"]):
+                ori_val = df_summary.loc[min_freq_index:min_freq_index + 1][feat_name].to_list()
+            else:
+                ori_val = df_summary.loc[min_freq_index - 1:min_freq_index][feat_name].to_list()
+            df[feat_name] = self.__rename_bin_code(df, ori_val, feat_name, sep, is_factor=is_factor)
+            df_summary = self.__df_summary(df, feat_name, label_name, is_factor=is_factor)
+            min_freq = min(df_summary["freq"])
+            if (df[feat_name].nunique() == 2):
+                break
+        return df, df_summary
+
+    def __rename_bin_code(self, df, ori_value, feat_name, sep, is_factor):
+        if is_factor:
+            new_value = pd.Interval(min(map(lambda x: x.left, ori_value)), max(map(lambda x: x.right, ori_value)))
+        else:
+            if not isinstance(df[feat_name].dype, object):
+                df[feat_name] = df[feat_name].astype(str)
+                ori_value = list(map(str, ori_value))
+            new_value = "{}".format(sep).join(ori_value)
+        replace_map = {k: new_value for k in ori_value}
+        replaced_series = df[feat_name].map(replace_map)
+        return replaced_series
 
     @staticmethod
-    def bin_freq_cuts(df_x, q, na_val=None, contain_last=False):
+    def bin_freq_cuts(df_x, q, na_val=None, contain_bound=False):
         '''等频，分割点'''
         if not isinstance(df_x, pd.Series):
             try:
                 df_x = pd.Series(df_x)
             except:
                 raise TypeError("df_x must array like type!")
-        if len(q) > 0 and q[-1] != 1. and contain_last:
+        if len(q) > 0 and q[-1] != 1. and contain_bound:
             q.append(1.)
+        else:
+            q.pop(0)
         if df_x.isna().sum():
             df_x = df_x[~pd.isna(df_x)]
             cuts = np.quantile(df_x, q)
@@ -131,12 +159,13 @@ class Discretize:
 
 def get_df_summary(df, feat_name, label_name, is_factor=False):
     df = df[[feat_name, label_name]]
-    if is_factor:
-        pass
     df_summary = df.groupby(feat_name)[label_name].agg([np.mean, np.count_nonzero, np.size]).rename(
-        columns={"count_nonzero": "bad_obs", "size": "n", "mean": "bad_rate"})
-    df_summary["arrange_col"] = df_summary["bad_rate"].rank()
-    df_summary = df_summary.sort_values(by=["arrange_col"]).reset_index()
+        columns={"count_nonzero": "bad_obs", "size": "n", "mean": "bad_rate"}).reset_index()
+    if is_factor:
+        df_summary["arrange_col"] = df_summary[feat_name]
+    else:
+        df_summary["arrange_col"] = df_summary["bad_rate"].rank()
+    df_summary = df_summary.sort_values(by=["arrange_col"]).reset_index(drop=True)
     df_summary["freq"] = df_summary["n"] / df_summary["n"].sum()
     df_summary["bad_rate_diff"] = df_summary["bad_rate"] - df_summary["bad_rate"].shift(1).fillna(0)
     df_summary["freq_sum"] = df_summary["freq"] + df_summary["freq"].shift(1).fillna(0)
@@ -173,12 +202,6 @@ def chi_square_pval(p, q):
     return p
 
 
-chi_square_pval(df_summary.loc[0].to_dict(), df_summary.loc[1].to_dict())
-
-
-#
-
-
 def __freq_bin_cuts(df_x, q, na_val=-1, contain_last=False):
     if not isinstance(df_x, pd.Series):
         try:
@@ -198,12 +221,6 @@ def __freq_bin_cuts(df_x, q, na_val=-1, contain_last=False):
     return res
 
 
-__freq_bin_cuts(data["risk_score"], np.arange(0., 1., 1 / 2), na_val=-1, contain_last=False)
-__freq_bin_cuts(data["pay_cash_first_duration"], np.arange(0., 1., 1 / 5), na_val=-1)
-pd.qcut()
-pd.qcut(data[data["risk_score"] != -1]["risk_score"], 2, retbins=True)
-
-
 def __bin_tree_single(df_x, df_y, max_depth, min_samples_leaf=0.2, criterion="gini", min_samples_split=1, **kwargs):
     dt = DecisionTreeClassifier(max_depth=max_depth, criterion=criterion, min_samples_split=min_samples_split,
                                 min_samples_leaf=min_samples_leaf, **kwargs)
@@ -214,4 +231,4 @@ def __bin_tree_single(df_x, df_y, max_depth, min_samples_leaf=0.2, criterion="gi
     return bins
 
 
-__bin_tree_single(data["risk_score"], data["label"], 3, 0.2, min_impurity_decrease=0)
+get_df_summary(data, "d_risk_score", label_name="label", is_factor=True)
