@@ -9,21 +9,23 @@ from xmml.tools.feature_discretize import Discretize
 
 if __name__ == "__main__":
 
-    # data = pd.read_csv("/home/mi/data/mi_data/data.csv", usecols=["xiaomi_id", "pay_first_date", "pay_cash_first_duration",
-    #                                                           "risk_score", "mi_user_model_sms_v2",
-    #                                                           "mi_user_model_account",
-    #                                                           "loan_amount_ratio", "label"])
-
-    data = pd.read_csv("/Users/hudoudou/zhaochen/data/data.csv", usecols=["xiaomi_id", "pay_first_date", "pay_cash_first_duration",
+    data = pd.read_csv("/home/mi/data/mi_data/data.csv", usecols=["xiaomi_id", "pay_first_date", "pay_cash_first_duration",
                                                               "risk_score", "mi_user_model_sms_v2",
                                                               "mi_user_model_account",
                                                               "loan_amount_ratio", "label"])
+
+    # data = pd.read_csv("/Users/hudoudou/zhaochen/data/data.csv", usecols=["xiaomi_id", "pay_first_date", "pay_cash_first_duration",
+    #                                                           "risk_score", "mi_user_model_sms_v2",
+    #                                                           "mi_user_model_account",
+    #                                                           "loan_amount_ratio", "label"])
 
 
     d = Discretize(df=data, cons_features=["risk_score", "mi_user_model_sms_v2", "mi_user_model_account"],
                    cate_features=None, na_val=-1)
 
     cuts = d.bin_freq_fit(qnt_num=10,contain_bound=False)
+
+    chi_cuts = d.bin_chi_fit(df=data, feat_name="risk_score", is_continuous=True, threshold=0.05, p_val=0.05, init_freq_bins=6)
 
     # d.bin_tree_fit(max_depth=2, min_samples_leaf=0.1)
 
