@@ -18,6 +18,8 @@ class Discretize:
         self.label_identify = label_identify
         self.na_val = na_val  # 缺失值
         self.is_na_bin = is_na_bin  # 是否对缺失值单独设为一个箱
+        self.cons_bins = None
+        self.cate_bins = None
 
     def bin_freq_fit(self, qnt_num=10, min_block_size=16, contain_bound=False, worker=1, verbose=0):
         cons_bins = {}
@@ -25,6 +27,7 @@ class Discretize:
             bins = self.__bin_freq_single(self.raw, cons_f, qnt_num, min_block_size, self.na_val, contain_bound)
             # bins = Parallel(n_jobs=worker, verbose=verbose, )(delayed(self.__bin_freq_single)(self.raw, feat, qnt_num, min_block_size, self.spec_values) for feat in self.cons_features)
             cons_bins[cons_f] = bins
+        self.cons_bins = cons_bins.copy()
         return cons_bins
 
     def __bin_freq_single(self, df, feat_name, qnt_num, min_block_size, na_val=-1, contain_bound=False):
@@ -79,6 +82,69 @@ class Discretize:
             bins = self.chi_merge_bin(df, "d_" + feat_name, label_name=self.label_identify, threshold=threshold, p_val=p_val, sep=sep, is_factor=False)
 
         return bins
+
+    def woe_transform(self):
+        woe_df = pd.DataFrame()
+        iv_df = []
+        if self.cons_bins:
+            for cons_feat, cons_bins in self.cons_bins.items():
+                woe_x, iv_x = self.woe_transform_single(self.raw[[cons_feat, self.label_identify]], bins=cons_bins, feat_name=cons_feat, is_continuous=True)
+                woe_df[cons_feat] = woe_x
+                iv_df.append((cons_feat,iv_x))
+        if self.cate_bins:
+            for cate_feat, cate_bins in self.cate_bins.items():
+                woe_x, iv_x = self.woe_transform_single(self.raw[[cate_feat, self.label_identify]], bins=cate_bins, feat_name=cate_feat, is_continuous=False)
+                woe_df[cate_feat] = woe_x
+                iv_df.append((cons_feat,iv_x))
+        iv_df = pd.DataFrame(data=iv_df, columns=["feat", "iv"])
+        # self.woe_df = woe_df.copy()
+        # self.iv_df = pd.DataFrame(data=iv_df, columns=["feat", "iv"])
+        return woe_df, iv_df
+
+
+    def woe_transform_single(self, df_xy, bins, feat_name, is_continuous=True):
+        bins = bins.copy()
+        if is_continuous:
+            if not (bins[0] == -np.infty and bins[-1] == np.infty):
+                bins = np.append(np.insert(bins, 0, -np.inf), np.inf)
+            df_xy["d_" + feat_name] = pd.cut(df_xy[feat_name], bins)
+            df_xy["d_" + feat_name] = df_xy["d_" + feat_name].astype(str)
+        else:
+            if isinstance(df_xy[feat_name].dtype, np.numeric):
+                df_xy[feat_name] = df_xy[feat_name].astype(str)
+            cate_replace_map = self.replace_cate_values(df_xy[feat_name], bins)
+            df_xy["d_" + feat_name] = df_xy[feat_name].map(cate_replace_map)
+        stat = self.calc_woe_single(df_xy, "d_" + feat_name)
+        iv = stat["iv_i"].sum()
+        woe_replace_map = {k:v for (_, k, v) in stat[["d_" + feat_name, "woe"]].itertuples()}
+        woe_x = df_xy["d_" + feat_name].map(woe_replace_map)
+        return woe_x, iv
+
+    @staticmethod
+    def replace_cate_values(x, bins):
+        x_unique = np.unique(x)
+        replace_map = {}
+        for v in bins:
+            for x in x_unique:
+                if x in v:
+                    replace_map.update({x:v})
+        return replace_map
+
+    def calc_woe_single(self, df_xy, d_feat_name):
+        stat = df_xy.groupby([d_feat_name])[self.label_identify].agg([np.mean, np.count_nonzero, np.size]).rename(
+            columns={"count_nonzero": "bad_obs", "size": "n", "mean": "bad_rate"}).reset_index()
+        stat["good_obs"] = stat["n"] - stat["bad_obs"]
+        t_good = np.maximum(stat["good_obs"].sum(), 0.5)
+        t_bad = np.maximum(stat["bad_obs"].sum(), 0.5)
+        stat["woe"] = stat.apply(self._bucket_woe, axis=1) + np.log(t_bad / t_good)
+        stat["iv_i"] = (stat["good_obs"] / t_good - stat["bad_obs"] / t_bad) * stat["woe"]
+        return stat
+
+    def onehot_transform(self):
+        pass
+
+    def label_encode_transform(self):
+        pass
 
     def df_summary(self, df, d_feat_name, label_name, is_factor=False):
         # feat_name:cut之后或者是类别型变量
@@ -211,6 +277,14 @@ class Discretize:
             res = np.append(na_val, np.unique(cuts))
         return res
 
+    @staticmethod
+    def _bucket_woe(x):
+        bad_i = x['bad_obs']
+        good_i = x['good_obs']
+        bad_i = 0.5 if bad_i == 0 else bad_i
+        good_i = 0.5 if good_i == 0 else good_i
+        return np.log(good_i / bad_i)
+
     def __replace_category_values(self, x, ori_values, new_values):
         # 处理category的数据
         x_new = x.cat.remove_categories(ori_values).cat.add_categories(new_values).fillna(new_values)
@@ -219,75 +293,3 @@ class Discretize:
         return x_new_reorder
 
 
-def get_df_summary(df, feat_name, label_name, is_factor=False):
-    df = df[[feat_name, label_name]]
-    df_summary = df.groupby(feat_name)[label_name].agg([np.mean, np.count_nonzero, np.size]).rename(
-        columns={"count_nonzero": "bad_obs", "size": "n", "mean": "bad_rate"}).reset_index()
-    if is_factor:
-        df_summary["arrange_col"] = df_summary[feat_name]
-    else:
-        df_summary["arrange_col"] = df_summary["bad_rate"].rank()
-    df_summary = df_summary.sort_values(by=["arrange_col"]).reset_index(drop=True)
-    df_summary["freq"] = df_summary["n"] / df_summary["n"].sum()
-    df_summary["bad_rate_diff"] = df_summary["bad_rate"] - df_summary["bad_rate"].shift(1).fillna(0)
-    df_summary["freq_sum"] = df_summary["freq"] + df_summary["freq"].shift(1).fillna(0)
-    p_vals, l = [], len(df_summary)
-    for i in range(l):
-        if i == 0:
-            res = chi_square_pval(df_summary.loc[i].to_dict(), df_summary.loc[l - 1].to_dict())
-        else:
-            res = chi_square_pval(df_summary.loc[i].to_dict(), df_summary.loc[i - 1].to_dict())
-        p_vals.append(res)
-    df_summary["p_val"] = p_vals
-    return df_summary
-
-
-def chi_square_pval(p, q):
-    a = p.get("n") * p.get("bad_rate")
-    b = p.get("n") - a
-    c = q.get("n") * q.get("bad_rate")
-    d = q.get("n") - c
-    m = np.array([[a, b], [c, d]])
-    if np.any(m < 100):
-        _, p = fisher_exact(m)
-    else:
-        I, E1, dsq1 = p.get("n"), p.get("bad_rate"), p.get("V")
-        J, E2, dsq2 = q.get("n"), q.get("bad_rate"), q.get("V")
-        K = I + J
-        Et = (E1 * I + E2 * J) / K
-        dsq1 = 0 if dsq1 is None else dsq1
-        dsq2 = 0 if dsq2 is None else dsq2
-        dsqt = (dsq1 * (I - 1) + I * E1 * E1 + dsq2 * (J - 1) + J * E2 * E2 - K * Et * Et) / (K - 1)
-
-        p = 2 * norm().cdf(-sqrt(I * J / K / dsqt) * abs(E1 - E2))
-
-    return p
-
-
-def __freq_bin_cuts(df_x, q, na_val=-1, contain_last=False):
-    if not isinstance(df_x, pd.Series):
-        try:
-            df_x = pd.Series(df_x)
-        except:
-            raise TypeError("df_x must array like type!")
-    if len(q) > 0 and q[-1] != 1. and contain_last:
-        q = list(q) + [1.]  # 加不加上最后一个位置， 要看是否将大于最后一个位置是数看成一个箱; 最后一个位置的最大值
-    if df_x.isna().sum():
-        df_x = df_x[~pd.isna(df_x)]
-        cuts = np.quantile(df_x, q)
-        res = np.append(np.nan, np.unique(cuts))
-    else:
-        df_x = df_x[df_x != na_val]
-        cuts = np.quantile(df_x, q)
-        res = np.append(na_val, np.unique(cuts))
-    return res
-
-
-def __bin_tree_single(df_x, df_y, max_depth, min_samples_leaf=0.2, criterion="gini", min_samples_split=1, **kwargs):
-    dt = DecisionTreeClassifier(max_depth=max_depth, criterion=criterion, min_samples_split=min_samples_split,
-                                min_samples_leaf=min_samples_leaf, **kwargs)
-    dt.fit(df_x.values.reshape(-1, 1), df_y)
-    print(dt.tree_.threshold)
-    bins = dt.tree_.threshold[dt.tree_.threshold > 0]
-    bins = np.sort(bins)
-    return bins

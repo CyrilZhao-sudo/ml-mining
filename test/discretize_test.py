@@ -27,6 +27,7 @@ if __name__ == "__main__":
 
     chi_cuts = d.bin_chi_fit(df=data, feat_name="risk_score", is_continuous=True, threshold=0.05, p_val=0.05, init_freq_bins=6)
 
+    d.woe_transform()
     # d.bin_tree_fit(max_depth=2, min_samples_leaf=0.1)
 
     data["d_risk_score"] = pd.cut(data["risk_score"], [-np.inf, -1, 37, 47, np.inf])
