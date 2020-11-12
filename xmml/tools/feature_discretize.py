@@ -17,7 +17,7 @@ from tqdm import tqdm
 
 
 class Discretize:
-    def __init__(self, train_df, cons_features, cate_features, label_identify="label", na_val=None, is_na_bin=False, cache_summary=False):
+    def __init__(self, train_df, cons_features, cate_features, label_identify="label", na_val=None, is_na_bin=False, cache_stat=False):
         self.raw = train_df # train dataFrame
         self.cons_features = cons_features
         self.cate_features = cate_features
@@ -28,7 +28,9 @@ class Discretize:
         self.cate_bins = None
         self.le_encoders = {}
         self.onehot_encoders = {}
-        self.cache_summary = cache_summary
+        self.cache_stat = cache_stat
+        self.woe_stats = {}
+        self._iv = []
 
     def bin_freq_fit(self, qnt_num=10, min_block_size=16, contain_bound=False, worker=1, verbose=0):
         cons_bins = {}
@@ -63,12 +65,13 @@ class Discretize:
         # print(dt.tree_.threshold)
         bins = dt.tree_.threshold[dt.tree_.threshold > 0]
         bins = np.sort(bins)
+
         return bins
 
-    def bin_chi_fit(self, df, feat_name, is_continuous, threshold, p_val, init_freq_bins, sep="|"):
+    def bin_chi_fit_single(self, df, feat_name, is_continuous, threshold, p_val, init_freq_bins, sep="|"):
         '''
         默认对数值特征先进行等频，在进行卡方分箱合并；对类别直接进行卡方分箱合并
-        :param df:
+        :param df: TODO df_xy or df ?
         :param feat_name:特征名称
         :param is_continuous: 是否是连续
         :param threshold: 每个bin的最小占比
@@ -89,6 +92,13 @@ class Discretize:
             else:
                 df["d_" + feat_name] = df[feat_name]
             bins = self.chi_merge_bin(df, "d_" + feat_name, label_name=self.label_identify, threshold=threshold, p_val=p_val, sep=sep, is_factor=False)
+        # todo 优化
+        df_xy_dis = self.df_x_discretize(df[[feat_name, self.label_identify]], bins, feat_name, is_continuous,
+                                         interval_str=True)
+        stat = self.calc_woe_single(df_xy_dis, "d_" + feat_name)
+        if self.cache_stat:
+            self.woe_stats[feat_name] = stat
+        self._iv.append((feat_name, np.sum(stat["iv_i"])))
 
         return bins
 
@@ -105,7 +115,7 @@ class Discretize:
             for cate_feat, cate_bins in self.cate_bins.items():
                 woe_x, iv_x = self.woe_transform_single(df[[cate_feat, self.label_identify]], bins=cate_bins, feat_name=cate_feat, is_continuous=False)
                 woe_df[cate_feat] = woe_x
-                iv_df.append((cons_feat,iv_x))
+                iv_df.append((cate_feat,iv_x))
         iv_df = pd.DataFrame(data=iv_df, columns=["feat", "iv"])
         # self.woe_df = woe_df.copy()
         # self.iv_df = pd.DataFrame(data=iv_df, columns=["feat", "iv"])
@@ -120,7 +130,7 @@ class Discretize:
             df_xy["d_" + feat_name] = pd.cut(df_xy[feat_name], bins)
             df_xy["d_" + feat_name] = df_xy["d_" + feat_name].astype(str)
         else:
-            if isinstance(df_xy[feat_name].dtype, np.numeric):
+            if np.issubdtype(df_xy[feat_name], np.number):
                 df_xy[feat_name] = df_xy[feat_name].astype(str)
             cate_replace_map = self.replace_cate_values(df_xy[feat_name], bins)
             df_xy["d_" + feat_name] = df_xy[feat_name].map(cate_replace_map)
@@ -129,6 +139,21 @@ class Discretize:
         woe_replace_map = {k:v for (_, k, v) in stat[["d_" + feat_name, "woe"]].itertuples()}
         woe_x = df_xy["d_" + feat_name].map(woe_replace_map)
         return woe_x, iv
+
+    def df_x_discretize(self, df_x, bins, feat_name, is_continuous, interval_str=False):
+        '''对单个特征进行分箱映射成每个箱，同时返回对应分箱之后映射的列'''
+        if is_continuous:
+            if not (bins[0] == -np.infty and bins[-1] == np.infty):
+                bins = np.append(np.insert(bins, 0, -np.inf), np.inf)
+            df_x["d_" + feat_name] = pd.cut(df_x[feat_name], bins=bins)
+            if interval_str:
+                df_x["d_" + feat_name] = df_x["d_" + feat_name].astype(str)
+        else:
+            if np.issubdtype(df_x[feat_name], np.number):
+                df_x[feat_name] = df_x[feat_name].astype(str)
+            cate_replace_map = self.replace_cate_values(df_x[feat_name], bins)
+            df_x["d_" + feat_name] = df_x[feat_name].map(cate_replace_map)
+        return df_x
 
     @staticmethod
     def replace_cate_values(x, bins):
@@ -163,7 +188,7 @@ class Discretize:
             for cate_feat, cate_bins in self.cate_bins.items():
                 onehot_x_sparse = self.onehot_encoder_single(df[[cate_feat]], bins=cate_bins,
                                                  feat_name=cate_feat, is_continuous=False)
-                onehot_x_df = pd.DataFrame(data=onehot_x_sparse.toarray, columns=[cons_feat + "_x{}".format(i) for i in range(onehot_x_sparse.shape[1])])
+                onehot_x_df = pd.DataFrame(data=onehot_x_sparse.toarray, columns=[cate_feat + "_x{}".format(i) for i in range(onehot_x_sparse.shape[1])])
                 onehot_df.append(onehot_x_df)
         onehot_df = pd.concat(onehot_df, axis=1)
         return onehot_df
@@ -175,7 +200,7 @@ class Discretize:
                 bins = np.append(np.insert(bins, 0, -np.inf), np.inf)
             df_x["d_" + feat_name] = pd.cut(df_x[feat_name], bins=bins)
         else:
-            if isinstance(df_x[feat_name].dtype, np.numeric):
+            if np.issubdtype(df_x[feat_name], np.number):
                 df_x[feat_name] = df_x[feat_name].astype(str)
             cate_replace_map = self.replace_cate_values(df_x[feat_name], bins)
             df_x["d_" + feat_name] = df_x[feat_name].map(cate_replace_map)
@@ -211,7 +236,7 @@ class Discretize:
                 bins = np.append(np.insert(bins, 0, -np.inf), np.inf)
             df_x["d_" + feat_name] = pd.cut(df_x[feat_name], bins=bins)
         else:
-            if isinstance(df_x[feat_name].dtype, np.numeric):
+            if np.issubdtype(df_x[feat_name], np.number):
                 df_x[feat_name] = df_x[feat_name].astype(str)
             cate_replace_map = self.replace_cate_values(df_x[feat_name], bins)
             df_x["d_" + feat_name] = df_x[feat_name].map(cate_replace_map)
