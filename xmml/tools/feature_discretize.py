@@ -10,6 +10,8 @@ from scipy.stats import chisquare, chi2_contingency, chi2, fisher_exact, norm
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 from tqdm import tqdm
+import warnings
+warnings.filterwarnings("ignore")
 
 
 
@@ -33,38 +35,46 @@ class Discretize:
         self._iv = []
 
     def bin_freq_fit(self, qnt_num=10, min_block_size=16, contain_bound=False, worker=1, verbose=0):
+        self.reset_status(reset_cate_bins=False)
         cons_bins = {}
-        for cons_f in self.cons_features:
+        for cons_f in tqdm(self.cons_features):
             bins = self.__bin_freq_single(self.raw, cons_f, qnt_num, min_block_size, self.na_val, contain_bound)
             # bins = Parallel(n_jobs=worker, verbose=verbose, )(delayed(self.__bin_freq_single)(self.raw, feat, qnt_num, min_block_size, self.spec_values) for feat in self.cons_features)
             cons_bins[cons_f] = bins
         self.cons_bins = cons_bins.copy()
-        return cons_bins
+        # return cons_bins
 
     def __bin_freq_single(self, df, feat_name, qnt_num, min_block_size, na_val=-1, contain_bound=False):
         _qnt_num = int(np.minimum(df[feat_name].nunique() / min_block_size, qnt_num))
         q = list(np.arange(0., 1., 1 / _qnt_num))
         bins = self.bin_freq_cuts(df[feat_name], q, na_val=na_val, contain_bound=contain_bound)
+        stat = self.__calc_stat_single(df[[feat_name, self.label_identify]], bins, feat_name, is_continuous=True,
+                                       interval_str=True)
+        self._iv.append((feat_name, np.sum(stat["iv_i"])))
         return bins
 
     def bin_tree_fit(self, max_depth, min_samples_leaf, criterion="gini", **kwargs):
+        self.reset_status(reset_cate_bins=False)
         cons_bins = {}
-        for cons_feat in self.cons_features:
-            df_x = self.raw[cons_feat]
-            df_y = self.raw[self.label_identify]
-            bins = self.__bin_tree_single(df_x, df_y, max_depth=max_depth, min_samples_leaf=min_samples_leaf,
+        for cons_feat in tqdm(self.cons_features):
+            df_xy = self.raw[[cons_feat, self.label_identify]]
+            bins = self.__bin_tree_single(df_xy, cons_feat, max_depth=max_depth, min_samples_leaf=min_samples_leaf,
                                           criterion=criterion, **kwargs)
             cons_bins[cons_feat] = bins
-        return cons_bins
+        self.cons_bins = cons_bins.copy()
+        # return cons_bins
 
-    def __bin_tree_single(self, df_x, df_y, max_depth, min_samples_leaf=0.2, criterion="gini",
+    def __bin_tree_single(self, df_xy, feat_name, max_depth, min_samples_leaf=0.2, criterion="gini",
                           **kwargs):
         dt = DecisionTreeClassifier(max_depth=max_depth, criterion=criterion,
                                     min_samples_leaf=min_samples_leaf, **kwargs)
-        dt.fit(df_x.values.reshape(-1, 1), df_y)
-        # print(dt.tree_.threshold)
+        x, y = df_xy[feat_name], df_xy[self.label_identify]
+        dt.fit(x.values.reshape(-1, 1), y)
         bins = dt.tree_.threshold[dt.tree_.threshold > 0]
         bins = np.sort(bins)
+        stat = self.__calc_stat_single(df_xy[[feat_name, self.label_identify]], bins, feat_name, is_continuous=True,
+                                       interval_str=True)
+        self._iv.append((feat_name, np.sum(stat["iv_i"])))
 
         return bins
 
@@ -92,53 +102,57 @@ class Discretize:
             else:
                 df["d_" + feat_name] = df[feat_name]
             bins = self.chi_merge_bin(df, "d_" + feat_name, label_name=self.label_identify, threshold=threshold, p_val=p_val, sep=sep, is_factor=False)
-        # todo 优化
-        df_xy_dis = self.df_x_discretize(df[[feat_name, self.label_identify]], bins, feat_name, is_continuous,
-                                         interval_str=True)
-        stat = self.calc_woe_single(df_xy_dis, "d_" + feat_name)
-        if self.cache_stat:
-            self.woe_stats[feat_name] = stat
+        # # todo 优化
+        # df_xy_dis = self.df_x_discretize(df[[feat_name, self.label_identify]], bins, feat_name, is_continuous,
+        #                                  interval_str=True)
+        # stat = self.calc_woe_single(df_xy_dis, "d_" + feat_name)
+        # if self.cache_stat:
+        #     self.woe_stats[feat_name] = stat
+        # self._iv.append((feat_name, np.sum(stat["iv_i"])))
+
+        stat = self.__calc_stat_single(df[[feat_name, self.label_identify]], bins, feat_name, is_continuous, interval_str=True)
         self._iv.append((feat_name, np.sum(stat["iv_i"])))
 
         return bins
 
+    def __calc_stat_single(self, df_xy, bins ,feat_name, is_continuous, interval_str):
+        df_xy_dis = self.df_x_discretize(df_xy, bins, feat_name, is_continuous, interval_str)
+        stat = self.calc_woe_single(df_xy_dis, "d_" + feat_name)
+        if self.cache_stat:
+            self.woe_stats[feat_name] = stat
+        return stat
+
     def woe_transform(self, data=None):
         df = self.raw.copy() if not data else data.copy()
         woe_df = pd.DataFrame()
-        iv_df = []
         if self.cons_bins:
             for cons_feat, cons_bins in self.cons_bins.items():
-                woe_x, iv_x = self.woe_transform_single(df[[cons_feat, self.label_identify]], bins=cons_bins, feat_name=cons_feat, is_continuous=True)
+                woe_x = self.woe_transform_single(df[[cons_feat, self.label_identify]], bins=cons_bins, feat_name=cons_feat, is_continuous=True)
                 woe_df[cons_feat] = woe_x
-                iv_df.append((cons_feat,iv_x))
         if self.cate_bins:
             for cate_feat, cate_bins in self.cate_bins.items():
-                woe_x, iv_x = self.woe_transform_single(df[[cate_feat, self.label_identify]], bins=cate_bins, feat_name=cate_feat, is_continuous=False)
+                woe_x = self.woe_transform_single(df[[cate_feat, self.label_identify]], bins=cate_bins, feat_name=cate_feat, is_continuous=False)
                 woe_df[cate_feat] = woe_x
-                iv_df.append((cate_feat,iv_x))
-        iv_df = pd.DataFrame(data=iv_df, columns=["feat", "iv"])
-        # self.woe_df = woe_df.copy()
-        # self.iv_df = pd.DataFrame(data=iv_df, columns=["feat", "iv"])
-        return woe_df, iv_df
+        return woe_df
 
 
     def woe_transform_single(self, df_xy, bins, feat_name, is_continuous=True):
         bins = bins.copy()
-        if is_continuous:
-            if not (bins[0] == -np.infty and bins[-1] == np.infty):
-                bins = np.append(np.insert(bins, 0, -np.inf), np.inf)
-            df_xy["d_" + feat_name] = pd.cut(df_xy[feat_name], bins)
-            df_xy["d_" + feat_name] = df_xy["d_" + feat_name].astype(str)
-        else:
-            if np.issubdtype(df_xy[feat_name], np.number):
-                df_xy[feat_name] = df_xy[feat_name].astype(str)
-            cate_replace_map = self.replace_cate_values(df_xy[feat_name], bins)
-            df_xy["d_" + feat_name] = df_xy[feat_name].map(cate_replace_map)
-        stat = self.calc_woe_single(df_xy, "d_" + feat_name)
-        iv = stat["iv_i"].sum()
+        # if is_continuous:
+        #     if not (bins[0] == -np.infty and bins[-1] == np.infty):
+        #         bins = np.append(np.insert(bins, 0, -np.inf), np.inf)
+        #     df_xy["d_" + feat_name] = pd.cut(df_xy[feat_name], bins)
+        #     df_xy["d_" + feat_name] = df_xy["d_" + feat_name].astype(str)
+        # else:
+        #     if np.issubdtype(df_xy[feat_name], np.number):
+        #         df_xy[feat_name] = df_xy[feat_name].astype(str)
+        #     cate_replace_map = self.replace_cate_values(df_xy[feat_name], bins)
+        #     df_xy["d_" + feat_name] = df_xy[feat_name].map(cate_replace_map)
+        df_xy_dis = self.df_x_discretize(df_xy, bins, feat_name, is_continuous, interval_str=True)
+        stat = self.calc_woe_single(df_xy_dis, "d_" + feat_name)
         woe_replace_map = {k:v for (_, k, v) in stat[["d_" + feat_name, "woe"]].itertuples()}
         woe_x = df_xy["d_" + feat_name].map(woe_replace_map)
-        return woe_x, iv
+        return woe_x
 
     def df_x_discretize(self, df_x, bins, feat_name, is_continuous, interval_str=False):
         '''对单个特征进行分箱映射成每个箱，同时返回对应分箱之后映射的列'''
@@ -182,35 +196,36 @@ class Discretize:
             for cons_feat, cons_bins in self.cons_bins.items():
                 onehot_x_sparse = self.onehot_encoder_single(df[[cons_feat]], bins=cons_bins,
                                                  feat_name=cons_feat, is_continuous=True)
-                onehot_x_df = pd.DataFrame(data=onehot_x_sparse.toarray, columns=[cons_feat + "_x{}".format(i) for i in range(onehot_x_sparse.shape[1])])
+                onehot_x_df = pd.DataFrame(data=onehot_x_sparse.toarray(), columns=[cons_feat + "_x{}".format(i) for i in range(onehot_x_sparse.shape[1])])
                 onehot_df.append(onehot_x_df)
         if self.cate_bins:
             for cate_feat, cate_bins in self.cate_bins.items():
                 onehot_x_sparse = self.onehot_encoder_single(df[[cate_feat]], bins=cate_bins,
                                                  feat_name=cate_feat, is_continuous=False)
-                onehot_x_df = pd.DataFrame(data=onehot_x_sparse.toarray, columns=[cate_feat + "_x{}".format(i) for i in range(onehot_x_sparse.shape[1])])
+                onehot_x_df = pd.DataFrame(data=onehot_x_sparse.toarray(), columns=[cate_feat + "_x{}".format(i) for i in range(onehot_x_sparse.shape[1])])
                 onehot_df.append(onehot_x_df)
         onehot_df = pd.concat(onehot_df, axis=1)
         return onehot_df
 
     def onehot_encoder_single(self, df_x, bins, feat_name, is_continuous):
         bins = bins.copy()
-        if is_continuous:
-            if not (bins[0] == -np.infty and bins[-1] == np.infty):
-                bins = np.append(np.insert(bins, 0, -np.inf), np.inf)
-            df_x["d_" + feat_name] = pd.cut(df_x[feat_name], bins=bins)
-        else:
-            if np.issubdtype(df_x[feat_name], np.number):
-                df_x[feat_name] = df_x[feat_name].astype(str)
-            cate_replace_map = self.replace_cate_values(df_x[feat_name], bins)
-            df_x["d_" + feat_name] = df_x[feat_name].map(cate_replace_map)
+        # if is_continuous:
+        #     if not (bins[0] == -np.infty and bins[-1] == np.infty):
+        #         bins = np.append(np.insert(bins, 0, -np.inf), np.inf)
+        #     df_x["d_" + feat_name] = pd.cut(df_x[feat_name], bins=bins)
+        # else:
+        #     if np.issubdtype(df_x[feat_name], np.number):
+        #         df_x[feat_name] = df_x[feat_name].astype(str)
+        #     cate_replace_map = self.replace_cate_values(df_x[feat_name], bins)
+        #     df_x["d_" + feat_name] = df_x[feat_name].map(cate_replace_map)
+        df_x_dis = self.df_x_discretize(df_x, bins, feat_name, is_continuous, interval_str=False)
         if feat_name in self.onehot_encoders:
             oe = self.onehot_encoders[feat_name]
         else:
             oe = OneHotEncoder(dtype=np.float32, drop='if_binary')
-            oe.fit(df_x[["d_" + feat_name]])
+            oe.fit(df_x_dis[["d_" + feat_name]])
             self.onehot_encoders[feat_name] = oe
-        x_oe_sparse = oe.transform(df_x[["d_" + feat_name]])
+        x_oe_sparse = oe.transform(df_x_dis[["d_" + feat_name]])
         return x_oe_sparse
 
     def label_encode_transform(self, data=None):
@@ -231,22 +246,23 @@ class Discretize:
 
     def label_encoder_single(self, df_x, bins, feat_name, is_continuous):
         bins = bins.copy()
-        if is_continuous:
-            if not (bins[0] == -np.infty and bins[-1] == np.infty):
-                bins = np.append(np.insert(bins, 0, -np.inf), np.inf)
-            df_x["d_" + feat_name] = pd.cut(df_x[feat_name], bins=bins)
-        else:
-            if np.issubdtype(df_x[feat_name], np.number):
-                df_x[feat_name] = df_x[feat_name].astype(str)
-            cate_replace_map = self.replace_cate_values(df_x[feat_name], bins)
-            df_x["d_" + feat_name] = df_x[feat_name].map(cate_replace_map)
+        # if is_continuous:
+        #     if not (bins[0] == -np.infty and bins[-1] == np.infty):
+        #         bins = np.append(np.insert(bins, 0, -np.inf), np.inf)
+        #     df_x["d_" + feat_name] = pd.cut(df_x[feat_name], bins=bins)
+        # else:
+        #     if np.issubdtype(df_x[feat_name], np.number):
+        #         df_x[feat_name] = df_x[feat_name].astype(str)
+        #     cate_replace_map = self.replace_cate_values(df_x[feat_name], bins)
+        #     df_x["d_" + feat_name] = df_x[feat_name].map(cate_replace_map)
+        df_x_dis = self.df_x_discretize(df_x, bins, feat_name, is_continuous, interval_str=False)
         if feat_name in self.le_encoders:
             le = self.le_encoders[feat_name]
         else:
             le = LabelEncoder()
-            le.fit(df_x["d_" + feat_name])
+            le.fit(df_x_dis["d_" + feat_name])
             self.le_encoders[feat_name] = le
-        x_le = le.transform(df_x["d_" + feat_name])
+        x_le = le.transform(df_x_dis["d_" + feat_name])
         return x_le
 
 
@@ -326,7 +342,7 @@ class Discretize:
             new_value = "{}".format(sep).join(ori_value)
             replace_map = {k: new_value for k in ori_value}
             replaced_series = df[d_feat_name].map(replace_map)
-        # TODO 对interval对象进行替换，变成nan
+
         return replaced_series
 
     def chi_merge_bin(self, df, d_feat_name, label_name, threshold=0.05, sep="|", p_val=0.05, is_factor=False):
@@ -390,10 +406,21 @@ class Discretize:
         return np.log(good_i / bad_i)
 
     def __replace_category_values(self, x, ori_values, new_values):
-        # 处理category的数据
+        # 处理category/interval的数据
         x_new = x.cat.remove_categories(ori_values).cat.add_categories(new_values).fillna(new_values)
         new_categories = sorted(x_new.cat.categories.to_list())
         x_new_reorder = x_new.cat.reorder_categories(new_categories, ordered=True)
         return x_new_reorder
+    @property
+    def iv_df(self):
+        if self._iv:
+            return pd.DataFrame(self._iv, columns=["feature", "iv"])
+        else:
+            return None
 
-
+    def reset_status(self, reset_cate_bins=True):
+        print("reset status.")
+        self._iv = []
+        self.cons_bins = None
+        if reset_cate_bins:
+            self.cate_bins = None
