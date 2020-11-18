@@ -9,16 +9,17 @@ from math import *
 from scipy.stats import chisquare, chi2_contingency, chi2, fisher_exact, norm
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder
+import itertools
 from tqdm import tqdm
 import warnings
+
 warnings.filterwarnings("ignore")
 
 
-
-
 class Discretize:
-    def __init__(self, train_df, cons_features, cate_features, label_identify="label", na_val=None, is_na_bin=False, cache_stat=False, sep="|"):
-        self.raw = train_df # train dataFrame
+    def __init__(self, train_df, cons_features, cate_features, label_identify="label", na_val=None, is_na_bin=False,
+                 cache_stat=False, sep="|"):
+        self.raw = train_df  # train dataFrame
         self.cons_features = cons_features if cons_features else []
         self.cate_features = cate_features if cate_features else []
         self.label_identify = label_identify
@@ -33,8 +34,10 @@ class Discretize:
         self.woe_stats = {}
         self._iv = []
         self.top_cate = 10
+        self._cate_mode = {}
 
-    def bin_freq_fit(self, qnt_num=10, min_block_size=16, contain_bound=False, worker=1, verbose=0, category_method="chi", threshold=0.05, p_val=0.05):
+    def bin_freq_fit(self, qnt_num=10, min_block_size=16, contain_bound=False, worker=1, verbose=0,
+                     category_method="chi", threshold=0.05, p_val=0.05):
         self.reset_status(reset_cate_bins=False)
         cons_bins, cate_bins = {}, {}
         for cons_f in tqdm(self.cons_features):
@@ -42,10 +45,11 @@ class Discretize:
             # bins = Parallel(n_jobs=worker, verbose=verbose, )(delayed(self.__bin_freq_single)(self.raw, feat, qnt_num, min_block_size, self.spec_values) for feat in self.cons_features)
             cons_bins[cons_f] = bins
         self.cons_bins = cons_bins.copy()
-        # return cons_bins
+
         for cate_f in tqdm(self.cate_features):
             df_xy = self.raw[[cate_f, self.label_identify]]
-            bins = self.bin_category_single(df_xy, cate_f, threshold=threshold, p_val=p_val, sep=self.sep, method=category_method)
+            bins = self.bin_category_single(df_xy, cate_f, threshold=threshold, p_val=p_val, sep=self.sep,
+                                            method=category_method)
             cate_bins[cate_f] = bins
         self.cate_bins = cate_bins.copy()
 
@@ -77,7 +81,6 @@ class Discretize:
                 raise ValueError("")
         return bins
 
-
     def bin_tree_fit(self, max_depth, min_samples_leaf, criterion="gini", **kwargs):
         self.reset_status(reset_cate_bins=False)
         cons_bins = {}
@@ -87,7 +90,7 @@ class Discretize:
                                           criterion=criterion, **kwargs)
             cons_bins[cons_feat] = bins
         self.cons_bins = cons_bins.copy()
-        # return cons_bins
+
 
     def __bin_tree_single(self, df_xy, feat_name, max_depth, min_samples_leaf=0.2, criterion="gini",
                           **kwargs):
@@ -116,24 +119,28 @@ class Discretize:
         :return:
         '''
         if is_continuous:
-            init_bins = self.__bin_freq_single(df, feat_name, qnt_num=init_freq_bins, min_block_size=10, na_val=self.na_val, contain_bound=False)
+            init_bins = self.__bin_freq_single(df, feat_name, qnt_num=init_freq_bins, min_block_size=10,
+                                               na_val=self.na_val, contain_bound=False)
             cut_point = np.append(np.insert(init_bins, 0, -np.inf), np.inf)
             df["d_" + feat_name] = pd.cut(df[feat_name], bins=cut_point)
-            raw_bins = self.chi_merge_bin(df, "d_" + feat_name, label_name=self.label_identify, threshold=threshold, p_val=p_val, sep=sep, is_factor=True)
+            raw_bins = self.chi_merge_bin(df, "d_" + feat_name, label_name=self.label_identify, threshold=threshold,
+                                          p_val=p_val, sep=sep, is_factor=True)
             bins = np.unique(list(map(lambda x: x.left, raw_bins)) + list(map(lambda x: x.right, raw_bins)))
         else:
             if np.issubdtype(df[feat_name], np.number):
                 df["d_" + feat_name] = df[feat_name].astype(str)
             else:
                 df["d_" + feat_name] = df[feat_name]
-            bins = self.chi_merge_bin(df, "d_" + feat_name, label_name=self.label_identify, threshold=threshold, p_val=p_val, sep=sep, is_factor=False)
+            bins = self.chi_merge_bin(df, "d_" + feat_name, label_name=self.label_identify, threshold=threshold,
+                                      p_val=p_val, sep=sep, is_factor=False)
 
-        stat = self.__calc_stat_single(df[[feat_name, self.label_identify]], bins, feat_name, is_continuous, interval_str=True)
+        stat = self.__calc_stat_single(df[[feat_name, self.label_identify]], bins, feat_name, is_continuous,
+                                       interval_str=True)
         self._iv.append((feat_name, np.sum(stat["iv_i"])))
 
         return bins
 
-    def __calc_stat_single(self, df_xy, bins ,feat_name, is_continuous, interval_str):
+    def __calc_stat_single(self, df_xy, bins, feat_name, is_continuous, interval_str):
         df_xy_dis = self.df_x_discretize(df_xy, bins, feat_name, is_continuous, interval_str)
         stat = self.calc_woe_single(df_xy_dis, "d_" + feat_name)
         if self.cache_stat:
@@ -147,15 +154,16 @@ class Discretize:
         if self.cons_bins:
             for cons_feat, cons_bins in self.cons_bins.items():
                 trans_df = data[[cons_feat]] if isinstance(data, pd.DataFrame) else None
-                woe_x = self.woe_transform_single(df[[cons_feat, self.label_identify]], bins=cons_bins, feat_name=cons_feat, is_continuous=True, transform_df=trans_df)
+                woe_x = self.woe_transform_single(df[[cons_feat, self.label_identify]], bins=cons_bins,
+                                                  feat_name=cons_feat, is_continuous=True, transform_df=trans_df)
                 woe_df[cons_feat] = woe_x
         if self.cate_bins:
             for cate_feat, cate_bins in self.cate_bins.items():
                 trans_df = data[[cate_feat]] if isinstance(data, pd.DataFrame) else None
-                woe_x = self.woe_transform_single(df[[cate_feat, self.label_identify]], bins=cate_bins, feat_name=cate_feat, is_continuous=False, transform_df=trans_df)
+                woe_x = self.woe_transform_single(df[[cate_feat, self.label_identify]], bins=cate_bins,
+                                                  feat_name=cate_feat, is_continuous=False, transform_df=trans_df)
                 woe_df[cate_feat] = woe_x
         return woe_df
-
 
     def woe_transform_single(self, df_xy, bins, feat_name, is_continuous=True, transform_df=None):
         if self.woe_stats.get(feat_name) is not None:
@@ -165,7 +173,7 @@ class Discretize:
             bins = bins.copy()
             df_xy_dis = self.df_x_discretize(df_xy, bins, feat_name, is_continuous, interval_str=True)
             stat = self.calc_woe_single(df_xy_dis, "d_" + feat_name)
-        woe_replace_map = {k:v for (_, k, v) in stat[["d_" + feat_name, "woe"]].itertuples()}
+        woe_replace_map = {k: v for (_, k, v) in stat[["d_" + feat_name, "woe"]].itertuples()}
         if transform_df is None:
             woe_x = df_xy_dis["d_" + feat_name].map(woe_replace_map)
         else:
@@ -184,19 +192,33 @@ class Discretize:
         else:
             if np.issubdtype(df_x[feat_name], np.number):
                 df_x[feat_name] = df_x[feat_name].astype(str)
-            cate_replace_map = self.replace_cate_values(df_x[feat_name], bins)
+            cate_replace_map = self.replace_cate_values(df_x[feat_name], bins, feat_name)
             df_x["d_" + feat_name] = df_x[feat_name].map(cate_replace_map)
         return df_x
 
-    @staticmethod
-    def replace_cate_values(x, bins):
-        # todo 对于unknown的类别处理
+    def replace_cate_values(self, x, bins, feat_name, sep="|", na_val=-1):
+        '''默认代替unknown的顺序:na -> unknown -> mode'''
         x_unique = np.unique(x)
+        ori_unique = np.unique(list(itertools.chain.from_iterable(map(lambda x: x.split(sep), bins))))
+        oof = set(x_unique).difference(set(ori_unique))
+        mode = self._cate_mode.get(feat_name)
+        oof_bins = {"mode": mode}
         replace_map = {}
-        for v in bins:
+        for b in bins:
+            if "unknown" in b:
+                oof_bins["unknown"] = b
+            if str(na_val) in b:
+                oof_bins[str(na_val)] = b
             for x in x_unique:
-                if x in v:
-                    replace_map.update({x:v})
+                if x in b:
+                    replace_map.update({x: b})
+        if len(oof_bins) == 0 and len(oof) != 0:
+            raise ValueError
+        elif len(oof_bins) > 0 and len(oof) != 0:
+            for o in oof:
+                replace_map.update({o: oof_bins.get(str(na_val), oof_bins.get("unknown", mode))})
+        else:
+            pass
         return replace_map
 
     def calc_woe_single(self, df_xy, d_feat_name):
@@ -217,14 +239,18 @@ class Discretize:
         if self.cons_bins:
             for cons_feat, cons_bins in self.cons_bins.items():
                 onehot_x_sparse = self.onehot_encoder_single(df[[cons_feat]], bins=cons_bins,
-                                                 feat_name=cons_feat, is_continuous=True)
-                onehot_x_df = pd.DataFrame(data=onehot_x_sparse.toarray(), columns=[cons_feat + "_x{}".format(i) for i in range(onehot_x_sparse.shape[1])])
+                                                             feat_name=cons_feat, is_continuous=True)
+                onehot_x_df = pd.DataFrame(data=onehot_x_sparse.toarray(),
+                                           columns=[cons_feat + "_x{}".format(i) for i in
+                                                    range(onehot_x_sparse.shape[1])])
                 onehot_df.append(onehot_x_df)
         if self.cate_bins:
             for cate_feat, cate_bins in self.cate_bins.items():
                 onehot_x_sparse = self.onehot_encoder_single(df[[cate_feat]], bins=cate_bins,
-                                                 feat_name=cate_feat, is_continuous=False)
-                onehot_x_df = pd.DataFrame(data=onehot_x_sparse.toarray(), columns=[cate_feat + "_x{}".format(i) for i in range(onehot_x_sparse.shape[1])])
+                                                             feat_name=cate_feat, is_continuous=False)
+                onehot_x_df = pd.DataFrame(data=onehot_x_sparse.toarray(),
+                                           columns=[cate_feat + "_x{}".format(i) for i in
+                                                    range(onehot_x_sparse.shape[1])])
                 onehot_df.append(onehot_x_df)
         onehot_df = pd.concat(onehot_df, axis=1)
         return onehot_df
@@ -256,15 +282,14 @@ class Discretize:
         if self.cons_bins:
             for cons_feat, cons_bins in self.cons_bins.items():
                 le_x = self.label_encoder_single(df[[cons_feat]], bins=cons_bins,
-                                                        feat_name=cons_feat, is_continuous=True)
+                                                 feat_name=cons_feat, is_continuous=True)
                 le_df[cons_feat] = le_x
         if self.cate_bins:
             for cate_feat, cate_bins in self.cate_bins.items():
                 le_x = self.label_encoder_single(df[[cate_feat]], bins=cate_bins,
-                                                        feat_name=cate_feat, is_continuous=False)
+                                                 feat_name=cate_feat, is_continuous=False)
                 le_df[cate_feat] = le_x
         return le_df
-
 
     def label_encoder_single(self, df_x, bins, feat_name, is_continuous):
         bins = bins.copy()
@@ -286,7 +311,6 @@ class Discretize:
             self.le_encoders[feat_name] = le
         x_le = le.transform(df_x_dis["d_" + feat_name])
         return x_le
-
 
     def df_summary(self, df, d_feat_name, label_name, is_factor=False):
         # feat_name:cut之后或者是类别型变量
@@ -352,6 +376,9 @@ class Discretize:
             if (df_xy[d_feat_name].nunique() == 2):
                 break
         if return_bins:
+            feat_name = d_feat_name[2:]
+            argmax_index = np.argmax(df_summary["freq"])
+            self._cate_mode[feat_name] = df_summary.loc[argmax_index, d_feat_name]
             bins = np.unique(df_summary.loc[:, d_feat_name])
             return bins
         return df_xy, df_summary
@@ -367,7 +394,7 @@ class Discretize:
                 ori_value = list(map(str, ori_value))
             new_value = "{}".format(sep).join(ori_value)
             replace_map = {k: new_value for k in ori_value}
-            replaced_series = df[d_feat_name].apply(lambda x:replace_map.get(x, x))
+            replaced_series = df[d_feat_name].apply(lambda x: replace_map.get(x, x))
 
         return replaced_series
 
@@ -383,7 +410,7 @@ class Discretize:
                 df_xy, df_summary = self.merge_bin_freq(df_xy, df_summary, d_feat_name, min_freq, threshold, label_name,
                                                         sep=sep, is_factor=is_factor)
             # min_bad_rate_diff = min(df_summary.loc[1:, "bad_rate_diff"])
-            print(df_summary[[d_feat_name,"freq", "p_val"]])
+            print(df_summary[[d_feat_name, "freq", "p_val"]])
 
             while (len(df_summary) > 2 and max(df_summary.loc[1:, "p_val"]) > p_val):  # todo 有点问题
                 merge_bins_idx = np.argmax(df_summary.loc[1:, "p_val"]) + 1
@@ -391,10 +418,14 @@ class Discretize:
                 df_xy[d_feat_name] = self.rename_bin_code(df_xy, ori_values, d_feat_name, sep=sep, is_factor=is_factor)
 
                 df_summary = self.df_summary(df_xy, d_feat_name, label_name, is_factor=is_factor)
-                print(df_summary[[d_feat_name,"freq", "p_val"]])
+                print(df_summary[[d_feat_name, "freq", "p_val"]])
         else:
             df_summary = self.df_summary(df_xy, d_feat_name, label_name, is_factor=is_factor)
         bins = np.unique(df_summary.loc[:, d_feat_name])
+        if not is_factor:
+            argmax_index = np.argmax(df_summary["freq"])
+            feat_name = d_feat_name[2:]
+            self._cate_mode[feat_name] = df_summary.loc[argmax_index, d_feat_name]
         return bins
 
     @staticmethod
@@ -437,6 +468,7 @@ class Discretize:
         new_categories = sorted(x_new.cat.categories.to_list())
         x_new_reorder = x_new.cat.reorder_categories(new_categories, ordered=True)
         return x_new_reorder
+
     @property
     def iv_df(self):
         if self._iv:
