@@ -41,8 +41,8 @@ class Discretize:
         self.reset_status(reset_cate_bins=False)
         cons_bins, cate_bins = {}, {}
         for cons_f in tqdm(self.cons_features):
-            bins = self.__bin_freq_single(self.raw, cons_f, qnt_num, min_block_size, self.na_val, contain_bound)
-            # bins = Parallel(n_jobs=worker, verbose=verbose, )(delayed(self.__bin_freq_single)(self.raw, feat, qnt_num, min_block_size, self.spec_values) for feat in self.cons_features)
+            bins = self._bin_freq_single(self.raw, cons_f, qnt_num, min_block_size, self.na_val, contain_bound, is_continuous=True, calc_stat=True)
+            # bins = Parallel(n_jobs=worker, verbose=verbose, )(delayed(self._bin_freq_single)(self.raw, feat, qnt_num, min_block_size, self.spec_values) for feat in self.cons_features)
             cons_bins[cons_f] = bins
         self.cons_bins = cons_bins.copy()
 
@@ -53,13 +53,16 @@ class Discretize:
             cate_bins[cate_f] = bins
         self.cate_bins = cate_bins.copy()
 
-    def __bin_freq_single(self, df, feat_name, qnt_num, min_block_size, na_val=-1, contain_bound=False):
-        _qnt_num = int(np.minimum(df[feat_name].nunique() / min_block_size, qnt_num))
+    def _bin_freq_single(self, df, feat_name, qnt_num, min_block_size, na_val=-1, contain_bound=False, is_continuous=True, calc_stat=False):
+        nunique = df[feat_name].nunique()
+        _qnt_num = int(np.minimum( nunique / min_block_size, qnt_num))
+        _qnt_num = _qnt_num if _qnt_num > 0 else nunique
         q = list(np.arange(0., 1., 1 / _qnt_num))
         bins = self.bin_freq_cuts(df[feat_name], q, na_val=na_val, contain_bound=contain_bound)
-        stat = self.__calc_stat_single(df[[feat_name, self.label_identify]], bins, feat_name, is_continuous=True,
-                                       interval_str=True)
-        self._iv.append((feat_name, np.sum(stat["iv_i"])))
+        if calc_stat:
+            stat = self.__calc_stat_single(df[[feat_name, self.label_identify]], bins, feat_name, is_continuous=is_continuous,
+                                           interval_str=True)
+            self._iv.append((feat_name, np.sum(stat["iv_i"])))
         return bins
 
     def bin_category_single(self, df_xy, feat_name, threshold, p_val, sep, method):
@@ -85,6 +88,7 @@ class Discretize:
         self.reset_status(reset_cate_bins=False)
         cons_bins = {}
         for cons_feat in tqdm(self.cons_features):
+            print("dealing {}".format(cons_feat))
             df_xy = self.raw[[cons_feat, self.label_identify]]
             bins = self.__bin_tree_single(df_xy, cons_feat, max_depth=max_depth, min_samples_leaf=min_samples_leaf,
                                           criterion=criterion, **kwargs)
@@ -100,11 +104,32 @@ class Discretize:
         dt.fit(x.values.reshape(-1, 1), y)
         bins = dt.tree_.threshold[dt.tree_.threshold > 0]
         bins = np.sort(bins)
-        stat = self.__calc_stat_single(df_xy[[feat_name, self.label_identify]], bins, feat_name, is_continuous=True,
-                                       interval_str=True)
-        self._iv.append((feat_name, np.sum(stat["iv_i"])))
+        if len(bins) > 0:
+            stat = self.__calc_stat_single(df_xy[[feat_name, self.label_identify]], bins, feat_name, is_continuous=True,
+                                           interval_str=True)
+            self._iv.append((feat_name, np.sum(stat["iv_i"])))
+        else:
+            print("feature: {}  is error")
+            return None
 
         return bins
+
+    def bin_chi_fit(self, threshold=0.05, p_val=0.05, init_freq_bins=10, category_method="chi"):
+        self.reset_status(reset_cate_bins=False)
+        cons_bins, cate_bins = {}, {}
+        for cons_f in tqdm(self.cons_features):
+            print("deal {}".format(cons_f))
+            bins = self.bin_chi_single(self.raw, cons_f, is_continuous=True, threshold=threshold, p_val=p_val, init_freq_bins=init_freq_bins, sep=self.sep)
+            # bins = Parallel(n_jobs=worker, verbose=verbose, )(delayed(self._bin_freq_single)(self.raw, feat, qnt_num, min_block_size, self.spec_values) for feat in self.cons_features)
+            cons_bins[cons_f] = bins
+        self.cons_bins = cons_bins.copy()
+
+        for cate_f in tqdm(self.cate_features):
+            df_xy = self.raw[[cate_f, self.label_identify]]
+            bins = self.bin_category_single(df_xy, cate_f, threshold=threshold, p_val=p_val, sep=self.sep,
+                                            method=category_method)
+            cate_bins[cate_f] = bins
+        self.cate_bins = cate_bins.copy()
 
     def bin_chi_single(self, df, feat_name, is_continuous, threshold, p_val, init_freq_bins, sep="|"):
         '''
@@ -119,8 +144,8 @@ class Discretize:
         :return:
         '''
         if is_continuous:
-            init_bins = self.__bin_freq_single(df, feat_name, qnt_num=init_freq_bins, min_block_size=10,
-                                               na_val=self.na_val, contain_bound=False)
+            init_bins = self._bin_freq_single(df, feat_name, qnt_num=init_freq_bins, min_block_size=10,
+                                               na_val=self.na_val, contain_bound=False, calc_stat=False)
             cut_point = np.append(np.insert(init_bins, 0, -np.inf), np.inf)
             df["d_" + feat_name] = pd.cut(df[feat_name], bins=cut_point)
             raw_bins = self.chi_merge_bin(df, "d_" + feat_name, label_name=self.label_identify, threshold=threshold,
@@ -342,6 +367,7 @@ class Discretize:
         d = q.get("n") - c
         m = np.array([[a, b], [c, d]])
         if np.any(m < 100):
+            print(m)
             _, p = fisher_exact(m)
         else:
             I, E1, dsq1 = p.get("n"), p.get("bad_rate"), p.get("V")
@@ -479,6 +505,7 @@ class Discretize:
     def reset_status(self, reset_cate_bins=True):
         print("reset status.")
         self._iv = []
+        self._cate_mode = {}
         self.cons_bins = None
         if reset_cate_bins:
             self.cate_bins = None
