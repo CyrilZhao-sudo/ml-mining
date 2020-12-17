@@ -31,3 +31,21 @@ def getPsiValue(base_pred, observe_pred, bins=10):
     data["baseBin"] = arrayBin
 
 
+
+def tpr_weight_function(y_true, y_predict):
+    df = pd.DataFrame()
+    df['prob'] = list(y_predict)
+    df['y'] = list(y_true)
+    df = df.sort_values(by=['prob'], ascending=False, ignore_index=True)
+    y = df.y
+    PosAll = pd.Series(y).value_counts()[1]
+    NegAll = pd.Series(y).value_counts()[0]
+    pCumsum = df['y'].cumsum()
+    nCumsum = np.arange(len(y)) - pCumsum + 1
+    pCumsumPer = pCumsum / PosAll
+    nCumsumPer = nCumsum / NegAll
+    TR1 = pCumsumPer[abs(nCumsumPer-0.001).idxmin()]
+    TR2 = pCumsumPer[abs(nCumsumPer-0.005).idxmin()]
+    TR3 = pCumsumPer[abs(nCumsumPer-0.01).idxmin()]
+    return 0.4 * TR1 + 0.3 * TR2 + 0.3 * TR3
+
