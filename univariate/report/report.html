@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head lang="zh">
+    <meta charset="UTF-8">
+    <title>单变量分析</title>
+    
+    <style>
+        body {
+            padding: 2em;
+        }
+        td {
+            padding: 5px 20px;
+            border: 1px solid #000;
+        }
+    </style>
+    
+</head>
+<body>
+    <div>
+        <div class='dashboard'>
+            <h4>变量A</h4>
+            
+            <table>
+                <caption>数据类型分布</caption>
+                <thead>
+                    <tr><td>Integer</td> <td>Float</td> <td>String</td> <td>Empty</td> <td>NaN</td> <td>Inf</td> <td>EmptyString</td> <td>IntegerStoredAsString</td> <td>FloatStoredAsString</td> <td>Unknown</td></tr>
+                </thead>
+                <tbody>
+                    <tr><td>540</td> <td>540</td> <td>540</td> <td>540</td> <td>540</td> <td>540</td> <td>540</td> <td>540</td> <td>540</td> <td>540</td></tr>
+                    <tr><td>10%</td> <td>20%</td> <td>30%</td> <td>10%</td> <td>10%</td> <td>10%</td> <td>20%</td> <td>20%</td> <td>10%</td> <td>5%</td></tr>
+                </tbody>
+            </table>
+            <table>
+                <caption>变量数值分布</caption>
+                <thead>
+                    <tr><td>count</td><td>mean</td><td>unique</td><td>std</td><td>min</td><td>25%</td><td>50%</td><td>75%</td><td>max</td></tr>
+                </thead>
+                <tbody>
+                    <tr><td>1000</td><td>0.5</td><td>102</td><td>0.05</td><td>1</td><td>25%</td><td>50%</td><td>75%</td><td>123</td></tr>
+                </tbody>
+            
+            </table>
+        
+        </div>
+    
+    </div>
+    
+</body>
+</html>
