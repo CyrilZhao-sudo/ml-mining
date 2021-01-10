@@ -2,3 +2,6 @@ data/
 *.csv
 *.txt
 demos/
+*.pt
+*.json
+resources/

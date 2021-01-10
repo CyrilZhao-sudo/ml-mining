@@ -12,6 +12,13 @@ import torch.nn.functional as F
 
 https://www.jeremyjordan.me/autoencoders/
 
+VAE：
+https://zhuanlan.zhihu.com/p/151587288
+https://zhuanlan.zhihu.com/p/55557709
+https://www.kaggle.com/hone5com/fraud-detection-with-variational-autoencoder
+https://ravirajag.dev/machine%20learning/data%20science/deep%20learning/generative/neural%20network/encoder/variational%20autoencoder/2019/02/09/vanillavae.html
+https://github.com/ethanluoyc/pytorch-vae/blob/master/vae.py
+https://www.cnblogs.com/jiangkejie/p/11179901.html
 '''
 
 
@@ -42,4 +49,18 @@ class AutoEncoder(torch.nn.Module):
 
 
 
+class VariationAutoEncoder(torch.nn.Module):
+    def __init__(self, input_dim, hidden_layers, dropout=0.5):
+        super(VariationAutoEncoder, self).__init__()
+        layers, _input_dim = [], input_dim
+        for h_dim in hidden_layers:
+            layers.append(torch.nn.Linear(input_dim, h_dim))
+            layers.append(torch.nn.BatchNorm1d(h_dim))
+            layers.append(torch.nn.ReLU())
+            layers.append(torch.nn.Dropout(p=dropout))
+            input_dim = h_dim
+        self.encoder = torch.nn.Sequential(*layers)
 
+
+    def forward(self, x):
+        pass

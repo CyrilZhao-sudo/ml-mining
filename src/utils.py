@@ -78,7 +78,7 @@ class EarlyStopper(object):
     def __init__(self, num_trials, save_path, is_better=True):
         self.num_trials = num_trials
         self.trial_counter = 0
-        self.best_metric = 0
+        self.best_metric = 0 if is_better else 1e+10
         self.save_path = save_path
         self.train_loss, self.valid_loss, self.test_loss = None, None, None
         self.train_score, self.valid_score, self.test_score = None, None, None
@@ -87,8 +87,10 @@ class EarlyStopper(object):
 
     def is_continuable(self, model, metric, losses=None, scores=None, epoch=None):
         if not self.is_better:
-            metric = -metric
-        if metric > self.best_metric:
+            delta_metric = self.best_metric - metric
+        else:
+            delta_metric = metric - self.best_metric
+        if delta_metric > 0:
             self.best_metric = metric
             self.trial_counter = 0
             torch.save(model, self.save_path)
