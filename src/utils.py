@@ -11,6 +11,8 @@ import tqdm
 from sklearn.metrics import roc_auc_score
 from torch import nn
 from torch.autograd import Function
+from joblib import delayed, Parallel
+import itertools
 
 def setup_seed(seed):
     torch.manual_seed(seed)
@@ -459,3 +461,50 @@ class GaussRankScaler:
         transformed = erfinv(transformed)
 
         return transformed
+
+
+class GetWordIndex:
+    def __init__(self, sentences, sep=';', unk_words=None, workers=4, max_vocab_size=None):
+
+        if workers <= 1:
+            corpus = self._gen_corpus(sentences, sep=sep, unk_words=unk_words)
+        else:
+            corpus = Parallel(n_jobs=workers, verbose=1,)(delayed(self._gen_corpus)(_sentences, sep) for _sentences in np.array_split(sentences, workers))
+            corpus = itertools.chain.from_iterable(corpus) # iterator
+
+        self.word2idx = self._gen_w2i(corpus, max_vocab_size=max_vocab_size, unk_words=unk_words)
+
+    def _gen_corpus(self, sentences, sep):
+        corpus = []
+        if sep:
+            for sentence in sentences:
+                if len(sentence) == 0:
+                    continue
+                try:
+                    word_list = sentence.strip().split(sep)
+                    corpus.extend(word_list)
+                except:
+                    print(sentence)
+        else:
+            for sentence in sentences:
+                if len(sentence) == 0:
+                    continue
+                corpus.extend(sentence)
+        return corpus
+
+    def _gen_w2i(self, corpus, max_vocab_size, unk_words):
+        word_index = {}
+        if not max_vocab_size:
+            for word in set(corpus):
+                if unk_words and word in unk_words:
+                    continue
+                word_index[word] = len(word_index) + 1
+        else:
+            from collections import Counter
+            counter = Counter(corpus)
+            for (word, cnt) in counter.most_common(max_vocab_size):
+                if unk_words and word in unk_words:
+                    continue
+                word_index[word] = len(word_index) + 1
+        word_index["unk"] = len(word_index) + 1  # 增加unk
+        return word_index
